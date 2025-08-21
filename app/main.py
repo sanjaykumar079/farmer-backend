@@ -1,24 +1,28 @@
+# main.py
+import os
+from dotenv import load_dotenv  # ✅ import here
+
+# load environment variables from .env
+load_dotenv()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import auth, farmers, officers, ai
+from app.routes import farmers, officers, auth
 
-app = FastAPI(title="Farmer-Horticulture-Interface API")
+app = FastAPI(title="Farmer-Horticulture API")
 
-# Enable CORS (frontend → backend communication)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Change later to specific frontend domain
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Routers
-app.include_router(auth.router, prefix="/auth", tags=["Auth"])
-app.include_router(farmers.router, prefix="/farmers", tags=["Farmers"])
-app.include_router(officers.router, prefix="/officers", tags=["Officers"])
-app.include_router(ai.router, prefix="/ai", tags=["AI Services"])
+app.include_router(auth.router, prefix="/auth", tags=["auth"])
+app.include_router(farmers.router, prefix="/farmers", tags=["farmers"])
+app.include_router(officers.router, prefix="/officers", tags=["officers"])
 
 @app.get("/")
-def root():
-    return {"message": "Farmer-Horticulture-Interface API running 🚜"}
+def health():
+    return {"ok": True}

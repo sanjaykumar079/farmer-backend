@@ -86,7 +86,7 @@ def validate_location(location: str) -> bool:
 # app/middleware/auth_middleware.py
 from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
-from app.services.supabase_client import supabase
+from backend.app.routes.supabase_client import supabase
 import logging
 
 logger = logging.getLogger(__name__)
