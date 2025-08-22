@@ -1,94 +1,73 @@
 # app/routes/farmers.py
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
-from typing import Optional
-from datetime import datetime
-import uuid
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from typing import Optional, Dict, Any
+from app.routes.supabase_client import supabase
 import logging
-from .supabase_client import supabase
+import uuid
 
 router = APIRouter()
-logger = logging.getLogger("farmers")
+log = logging.getLogger(__name__)
 
-BUCKET = "farmer-queries"          # must exist
-FOLDER = "query-images"            # folder inside bucket
-
-def _ensure_farmer_exists(farmer_id: str):
-    prof = supabase.table("profiles").select("id, role").eq("id", farmer_id).limit(1).execute()
+def _ensure_farmer_exists(farmer_id: str) -> Dict[str, Any]:
+    prof = supabase.table("profiles").select("id, role, full_name, email").eq("id", farmer_id).limit(1).execute()
     if not prof.data:
-        raise HTTPException(status_code=404, detail="Farmer profile not found. Please login again.")
-    if prof.data[0].get("role") != "farmer":
-        raise HTTPException(status_code=403, detail="Only farmers can submit queries")
+        raise HTTPException(status_code=404, detail="Farmer profile not found")
+    return prof.data[0]
 
-# app/routes/farmers.py
 @router.get("/my-queries/{farmer_id}")
 def get_my_queries(farmer_id: str):
-    try:
-        response = supabase.table("queries").select(
-            """
-            id,
-            farmer_id,
-            query_text,
-            image_url,
-            urgency,
-            status,
-            created_at,
-            replies(id, officer_id, response_text, audio_path, created_at)
-            """
-        ).eq("farmer_id", farmer_id).order("created_at", desc=True).execute()
-
-        return response.data
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch queries: {str(e)}")
-
-
-
-@router.get("/dashboard-stats/{farmer_id}")
-def dashboard_stats(farmer_id: str):
     _ensure_farmer_exists(farmer_id)
-    total = supabase.rpc("count_queries_by_farmer", {"fid": farmer_id}).execute().data if hasattr(supabase, "rpc") else None
-    # fallback simple counts if you don't have the RPC
-    q = supabase.table("queries").select("id").eq("farmer_id", farmer_id).execute().data or []
-    r = supabase.table("replies").select("id").in_("query_id", [row["id"] for row in q] or [-1]).execute().data or []
-    return {"total_queries": len(q), "total_replies": len(r)}
+
+    qres = (
+        supabase.table("queries")
+        .select("id,query_text,image_url,status,urgency,created_at")
+        .eq("farmer_id", farmer_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    queries = qres.data or []
+
+    # bring replies for these queries
+    q_ids = [q["id"] for q in queries]
+    replies_by_qid = {}
+    if q_ids:
+        rres = supabase.table("replies") \
+            .select("id,query_id,officer_id,response_text,created_at") \
+            .in_("query_id", q_ids).order("created_at", desc=True).execute()
+        for r in rres.data or []:
+            replies_by_qid.setdefault(r["query_id"], []).append(r)
+
+    # attach replies
+    for q in queries:
+        q["replies"] = replies_by_qid.get(q["id"], [])
+
+    return {"ok": True, "data": queries}
 
 @router.post("/submit-query")
 async def submit_query(
     farmer_id: str = Form(...),
-    query_text: str = Form(...),
-    urgency: str = Form("medium"),
+    query_text: str = Form(""),
     image: Optional[UploadFile] = File(None)
 ):
     _ensure_farmer_exists(farmer_id)
 
     image_url = None
-    if image and image.filename:
-        content = await image.read()
-        ext = image.filename.split(".")[-1].lower() if "." in image.filename else "jpg"
-        unique = f"{farmer_id}_{uuid.uuid4()}.{ext}"
-        path = f"{FOLDER}/{unique}"
+    if image:
+        # store under a deterministic key
+        key = f"queries/{farmer_id}/{uuid.uuid4()}-{image.filename}"
+        storage.from_("public").upload(file=image.file, path=key, file_options={"content_type": image.content_type})
+        # public URL
+        image_url = f"{storage.public_url('public')}/{key}".replace("//public/", "/public/")
 
-        up = supabase.storage.from_(BUCKET).upload(path, content)
-        if getattr(up, "error", None):
-            raise HTTPException(status_code=500, detail=f"Image upload failed: {up.error}")
-
-        url_dict = supabase.storage.from_(BUCKET).get_public_url(path)
-        image_url = url_dict.get("publicUrl") if isinstance(url_dict, dict) else str(url_dict)
-
-    query_data = {
+    ins = supabase.table("queries").insert({
         "farmer_id": farmer_id,
-        "query_text": query_text,
+        "query_text": query_text.strip(),
         "image_url": image_url,
-        "urgency": urgency,
         "status": "pending",
-        "created_at": datetime.utcnow().isoformat()
-    }
+        "urgency": "medium"
+    }).execute()
 
-    try:
-        ins = supabase.table("queries").insert(query_data).execute()
-        if not ins.data:
-            raise Exception(getattr(ins, "error", "Unknown insert error"))
-        query_id = ins.data[0]["id"]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save query: {e}")
+    if not ins.data:
+        raise HTTPException(status_code=500, detail="Failed to create query")
 
-    return {"message": "query submitted successfully", "query_id": query_id, "image_url": image_url}
+    return {"ok": True, "query": ins.data[0]}

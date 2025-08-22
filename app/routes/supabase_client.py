@@ -1,12 +1,14 @@
-# app/routes/supabase_client.py
 import os
+from dotenv import load_dotenv
 from supabase import create_client, Client
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-# Use the **service role key** on the backend so inserts bypass RLS restrictions
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+# Load .env variables
+load_dotenv()
 
-if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-    raise RuntimeError("Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in your environment")
+url = os.getenv("SUPABASE_URL")
+key = os.getenv("SUPABASE_KEY")
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+if not url or not key:
+    raise RuntimeError("Set SUPABASE_URL and SUPABASE_KEY in your environment")
+
+supabase: Client = create_client(url, key)
